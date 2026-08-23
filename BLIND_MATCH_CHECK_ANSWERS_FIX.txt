@@ -1,0 +1,6 @@
+FINAL Blind Match Check Answers fix
+
+Run this migration in the existing Prom Pulse Supabase project:
+supabase/migrations/20260822_blind_match_check_answers_score_fix.sql
+
+Do not rerun older migrations. This migration only replaces submit_blind_round.

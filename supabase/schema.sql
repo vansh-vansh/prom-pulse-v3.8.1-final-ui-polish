@@ -331,7 +331,7 @@ as $$
     when 9 then 'Main Character 🌟'
     when 8 then 'Prom Icon 👑'
     when 7 then 'Heartbreaker 💘'
-    when 6 then 'Chemistry Hunter 🔥'
+    when 6 then 'Connection Hunter 🔥'
     when 5 then 'Prom Explorer 🪩'
     when 4 then 'Connection Maker 💗'
     when 3 then 'Vibe Finder 🎧'
@@ -343,7 +343,7 @@ $$;
 insert into public.badges(slug,name,description,icon) values
 ('first_connection','First Connection','Made your first Prom connection.','🏅'),
 ('secret_admirer','Secret Admirer','Got your first mutual Secret Crush.','💗'),
-('chemistry_hunter','Chemistry Hunter','Completed 5 missions.','🎯'),
+('chemistry_hunter','Connection Hunter','Completed 5 missions.','🎯'),
 ('speed_heart','Speed Heart','Won a 60-second Blind Match.','⏱️'),
 ('social_explorer','Social Explorer','Connected across 5 different branches.','🌎'),
 ('prom_regular','Prom Regular','Completed missions on 7 different days.','🪩'),
@@ -431,9 +431,9 @@ begin
   if not found then
     insert into public.prom_missions(title,description,icon,reward_xp,sort_order,min_level,is_daily,active) values ('Cross-Campus Spark','Make a connection with someone from a different course.','✨',45,7,3,false,true);
   end if;
-  update public.prom_missions set description='Complete one Blind Match successfully.', icon='🔥', reward_xp=60, sort_order=8, min_level=4, is_daily=false, active=true where title='Chemistry Challenge';
+  update public.prom_missions set description='Complete one Blind Match successfully.', icon='🔥', reward_xp=60, sort_order=8, min_level=4, is_daily=false, active=true where title='Blind Match Challenge';
   if not found then
-    insert into public.prom_missions(title,description,icon,reward_xp,sort_order,min_level,is_daily,active) values ('Chemistry Challenge','Complete one Blind Match successfully.','🔥',60,8,4,false,true);
+    insert into public.prom_missions(title,description,icon,reward_xp,sort_order,min_level,is_daily,active) values ('Blind Match Challenge','Complete one Blind Match successfully.','🔥',60,8,4,false,true);
   end if;
   update public.prom_missions set description='Save your first Secret Crush.', icon='💗', reward_xp=50, sort_order=9, min_level=4, is_daily=false, active=true where title='Secret Signal';
   if not found then
@@ -597,7 +597,7 @@ as $$
   select case
     when viewer_gender = 'boy' then target_gender = 'girl'
     when viewer_gender = 'girl' then target_gender = 'boy'
-    when viewer_gender = 'gay' then target_gender = 'boy'
+    
     else false
   end
 $$;

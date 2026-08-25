@@ -17,7 +17,7 @@ const ENERGY_DESCRIPTIONS: Record<string, string> = {
   'Memory Collector': 'You care about capturing little moments and turning the night into lasting memories.',
   'Figure out yourself': 'You are still discovering your Prom vibe, and that is part of the fun.'
 }
-const GENDERS = ['boy', 'girl', 'gay'] as const
+const GENDERS = ['boy', 'girl'] as const
 type Gender = typeof GENDERS[number]
 const PROM_STYLES = ['Dance all night', 'Dinner + conversation', 'Photos everywhere', 'Just vibe', 'Meet new people', 'I have no plan']
 const LOOKING = ['Prom +1', 'New friends', 'A great conversation', 'Prom crew', 'Just exploring']
@@ -32,7 +32,7 @@ type OwnedBlindQuestion = { id: string; prompt: string; options: BlindOption[]; 
 type Profile = {
   id: string; name: string; email?: string | null; college_name: string; email_verified?: boolean; age?: number | null; course?: string | null
   pronouns?: string | null; branch?: string | null; year?: string | null; bio?: string | null; avatar_url?: string | null
-  interests?: string[]; interests_private?: boolean; banned_at?: string | null; prom_energy?: string | null; prom_style?: string | null; looking_for?: string | null; gender?: Gender | null
+  interests?: string[]; interests_private?: boolean; banned_at?: string | null; prom_energy?: string | null; prom_style?: string | null; looking_for?: string | null; gender?: Gender | null; is_matched?: boolean
 }
 type Match = { id: string; requester_id: string; receiver_id: string; status: string; created_at: string; requester: Profile; receiver: Profile }
 type Message = { id: string; conversation_id: string; sender_id: string; body: string; created_at: string }
@@ -49,10 +49,10 @@ type Badge = { id: string; slug: string; name: string; description: string; icon
 const LEVELS = [
   { level: 1, min: 0, title: 'Newcomer 💫', unlock: 'Your Prom Pulse journey begins.' },
   { level: 2, min: 100, title: 'Social Spark ✨', unlock: 'Unlock an extra Prom Pick.' },
-  { level: 3, min: 250, title: 'Vibe Finder 🎧', unlock: 'Better chemistry recommendations.' },
+  { level: 3, min: 250, title: 'Vibe Finder 🎧', unlock: 'Unlock stronger connection recommendations.' },
   { level: 4, min: 450, title: 'Connection Maker 💗', unlock: 'Unlock your first Secret Crush slot.' },
   { level: 5, min: 700, title: 'Prom Explorer 🪩', unlock: 'Unlock a special profile frame.' },
-  { level: 6, min: 1000, title: 'Chemistry Hunter 🔥', unlock: 'Unlock a 60-sec Match priority badge.' },
+  { level: 6, min: 1000, title: 'Connection Hunter 🔥', unlock: 'Unlock a 60-sec Match priority badge.' },
   { level: 7, min: 1400, title: 'Heartbreaker 💘', unlock: 'Unlock an exclusive profile badge.' },
   { level: 8, min: 1800, title: 'Prom Icon 👑', unlock: 'Unlock a premium heart aura.' },
   { level: 9, min: 2250, title: 'Main Character 🌟', unlock: 'Unlock a cinematic profile treatment.' },
@@ -115,6 +115,7 @@ export default function Home() {
   const [onlineIds, setOnlineIds] = useState<string[]>([])
   const [unreadByConversation, setUnreadByConversation] = useState<Record<string, number>>({})
   const [crushIds, setCrushIds] = useState<string[]>([])
+  const [blindAttemptedIds, setBlindAttemptedIds] = useState<string[]>([])
   const [blindTarget, setBlindTarget] = useState<Profile | null>(null)
   const [missionCompleteInfo, setMissionCompleteInfo] = useState<{ title: string; description: string; xp: number; levelUp?: boolean; newLevel?: number } | null>(null)
   const [progress, setProgress] = useState<Progress | null>(null)
@@ -206,7 +207,7 @@ export default function Home() {
     // Ensure the full mission catalog exists before loading it. The RPC is a security-definer
     // function so normal users never need direct INSERT access to prom_missions.
     await supabase.rpc('ensure_prom_mission_catalog')
-    const [{ data: p }, { data: c }, { data: missionRows }, { data: completionRows }, { data: progressRow }, { data: xpRows }, { data: badgeRows }] = await Promise.all([
+    const [{ data: p }, { data: c }, { data: missionRows }, { data: completionRows }, { data: progressRow }, { data: xpRows }, { data: badgeRows }, { data: blindAttempts }] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
       supabase.from('college_config').select('*').eq('id', true).maybeSingle(),
       supabase.from('prom_missions').select('*').eq('active', true).order('sort_order'),
@@ -214,6 +215,7 @@ export default function Home() {
       supabase.from('user_progress').select('*').eq('user_id', userId).maybeSingle(),
       supabase.from('xp_transactions').select('id, amount, source, created_at, mission_id').eq('user_id', userId).order('created_at', { ascending: false }).limit(80),
       supabase.from('user_badges').select('badge:badges(*)').eq('user_id', userId).order('earned_at', { ascending: false }),
+      supabase.from('blind_rounds').select('target_id').eq('challenger_id', userId),
     ])
     if (c) setConfig(c as Config)
     if (missionRows) setMissions(missionRows as Mission[])
@@ -221,6 +223,7 @@ export default function Home() {
     if (progressRow) setProgress(progressRow as Progress)
     if (xpRows) setXpHistory(xpRows as XPTransaction[])
     if (badgeRows) setBadges((badgeRows || []).map((x:any) => x.badge).filter(Boolean) as Badge[])
+    if (blindAttempts) setBlindAttemptedIds([...new Set((blindAttempts as any[]).map(x => x.target_id).filter(Boolean))])
     if (p) {
       setProfile(p as Profile)
       setForm({
@@ -314,17 +317,19 @@ export default function Home() {
   }
   useEffect(() => { if (isAdmin && tab === 'admin') loadReports() }, [isAdmin, tab])
 
-  const accepted = useMemo(() => {
+  const conversations = useMemo(() => {
     const map = new Map<string, Match>()
-    ;[...incoming, ...outgoing].filter(x => x.status === 'accepted').forEach(x => {
+    ;[...incoming, ...outgoing].filter(x => x.status === 'accepted' || x.status === 'cancelled').forEach(x => {
       const otherId = x.requester_id === session?.user?.id ? x.receiver_id : x.requester_id
       if (!map.has(otherId)) map.set(otherId, x)
     })
     return [...map.values()]
   }, [incoming, outgoing, session?.user?.id])
+  const accepted = conversations.filter(x => x.status === 'accepted')
   const pendingIncoming = incoming.filter(x => x.status === 'pending')
   const unreadNotifications = notifications.filter(x => !x.read_at).length
-  const currentOther = (m: Match) => m.requester_id === session?.user?.id ? m.receiver : m.requester
+  const currentUserId = session?.user?.id || ''
+  const currentOther = (m: Match) => m.requester_id === currentUserId ? m.receiver : m.requester
 
   const filters = useMemo(() => ({ branches: BRANCHES.slice(), courses: COURSES.slice() }), [])
 
@@ -340,14 +345,6 @@ export default function Home() {
     })
   }, [people, search, branchFilter, courseFilter, ageFilter, energyFilter])
 
-  const chemistry = (p: Profile) => {
-    const mine = new Set(profile?.interests_private ? [] : (profile?.interests || []).map(x => x.toLowerCase()))
-    const theirs = p.interests_private ? 0 : (p.interests || []).filter(x => mine.has(x.toLowerCase())).length
-    const base = 58 + Math.min(theirs * 8, 24)
-    if (profile?.prom_energy && p.prom_energy === profile.prom_energy) return Math.min(base + 10, 98)
-    return Math.min(base, 92)
-  }
-
   useEffect(() => {
     if (!profile || people.length === 0) return
     const dayKey = new Date().toISOString().slice(0, 10)
@@ -358,7 +355,7 @@ export default function Home() {
       return hash
     }
     const picksForToday = [...people]
-      .sort((a, b) => chemistry(b) - chemistry(a) || dailyScore(a) - dailyScore(b))
+      .sort((a, b) => dailyScore(a) - dailyScore(b))
       .slice(0, 3)
     setPicks(picksForToday)
   }, [profile?.id, people.length, search])
@@ -612,17 +609,30 @@ export default function Home() {
 
   async function requestPartner(id: string) {
     if (!session?.user || id === session.user.id) return
+    if (accepted.length > 0) { flash('You are already matched. Unmatch first to ask someone else. 💗'); return }
     const relation = relationshipWith(id)
-    if (relation.status === 'accepted') { flash('You already matched 💗'); return }
+    if (relation.status === 'accepted') { flash('Already matched 💗'); return }
     if (relation.status === 'pending') { flash('Prom request already sent 💌'); return }
     if (relation.status === 'incoming' && relation.match) {
       await respond(relation.match.id, 'accepted')
       return
     }
-    if (relation.status === 'declined') { flash('That request was declined. You cannot send another request to the same person.'); return }
+    if (relation.status === 'declined' && relation.match?.receiver_id === session.user.id) {
+      // The person who declined can reopen the relationship by sending a fresh request.
+    } else if (relation.status === 'declined') {
+      flash('This request was declined.'); return
+    }
     setLoading(true)
     const { error } = await supabase.rpc('send_prom_request', { target_user_id: id })
     if (error) flash(error.message); else { flash('Prom request sent 💌'); await refreshMatches() }
+    setLoading(false)
+  }
+
+  async function cancelRequest(match: Match) {
+    if (!session?.user || match.requester_id !== session.user.id || match.status !== 'pending') return
+    setLoading(true)
+    const { error } = await supabase.rpc('cancel_prom_request', { request_uuid: match.id })
+    if (error) flash(error.message); else { flash('Prom request cancelled.'); await refreshMatches() }
     setLoading(false)
   }
 
@@ -639,9 +649,9 @@ export default function Home() {
     const { error } = await supabase.rpc('unmatch_prom', { request_uuid: match.id })
     if (error) { flash(error.message) }
     else {
-      setActiveMatch(null)
       setUnmatchConfirm(null)
-      flash('You are no longer matched. Your profile is visible in discovery again. 💗')
+      setActiveMatch(prev => prev ? ({ ...prev, status: 'cancelled' }) : prev)
+      flash('You are no longer matched. Your chat history remains available. 💗')
       await refreshMatches(session.user.id)
       await loadPeople(session.user.id, profile?.college_name || config.college_name)
     }
@@ -650,6 +660,7 @@ export default function Home() {
 
   async function sendMessage(e: FormEvent) {
     e.preventDefault(); if (!activeMatch || !draft.trim() || !session?.user) return
+    if (activeMatch.status !== 'accepted') { flash('Get matched to chat again. 💗'); return }
     const { error } = await supabase.from('messages').insert({ conversation_id: activeMatch.id, sender_id: session.user.id, body: draft.trim() })
     if (error) flash(error.message); else setDraft('')
   }
@@ -668,10 +679,12 @@ export default function Home() {
 
   async function secretCrush(p: Profile) {
     if (!session?.user) return
-    if (crushIds.includes(p.id)) { flash('Already in your Secret Crush list 💗'); return }
     const { data, error } = await supabase.rpc('save_secret_crush', { target_user_id: p.id })
     if (error) flash(error.message)
-    else {
+    else if (data?.status === 'removed') {
+      setCrushIds(prev => prev.filter(id => id !== p.id))
+      flash('Secret Crush removed. 💗')
+    } else {
       setCrushIds(prev => prev.includes(p.id) ? prev : [...prev, p.id])
       if (data?.status === 'mutual') { setSecretMatchPopup({ name: p.name }); await refreshMatches(); await loadNotifications(session.user.id); flash('It’s mutual. 💗') }
       else flash('Secret Crush saved. They won’t know unless they choose you too. 🤫')
@@ -758,6 +771,7 @@ export default function Home() {
   async function toggleBan(id: string, banned: boolean) { await supabase.from('profiles').update({ banned_at: banned ? new Date().toISOString() : null }).eq('id', id); loadReports(); loadPeople() }
 
   async function openBlind(p: Profile) {
+    if (blindAttemptedIds.includes(p.id)) { flash('Already attempted this person.'); return }
     setBlindTarget(p)
     setBlindSeconds(60)
     setBlindExpiresAt(null)
@@ -781,6 +795,7 @@ export default function Home() {
     setBlindSeconds(Math.max(0, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000)))
     setBlindQuestions(questions)
     setBlindAnswers(questions.map(() => -1))
+    setBlindAttemptedIds(prev => prev.includes(p.id) ? prev : [...prev, p.id])
   }
 
   useEffect(() => {
@@ -788,7 +803,7 @@ export default function Home() {
     const tick = () => {
       const remaining = Math.max(0, Math.ceil((new Date(blindExpiresAt).getTime() - Date.now()) / 1000))
       setBlindSeconds(remaining)
-      if (remaining <= 0) setBlindFailed(true)
+      if (remaining <= 0) { setBlindTarget(null); setBlindFailed(false); setBlindSorryPopup(false); flash('Time ran out. Try another person. ⏱️') }
     }
     tick()
     const timer = setInterval(tick, 250)
@@ -797,7 +812,7 @@ export default function Home() {
 
   async function submitBlind() {
     if (!blindTarget || !blindRoundId || loading) return
-    if (blindSeconds <= 0) { setBlindFailed(true); setBlindSorryPopup(true); return }
+    if (blindSeconds <= 0) { setBlindTarget(null); setBlindFailed(false); setBlindSorryPopup(false); flash('Time ran out. Try another person. ⏱️'); return }
     if (blindQuestions.length !== 3 || blindAnswers.length !== 3 || blindAnswers.some(x => !Number.isInteger(x) || x < 0)) {
       flash('Please answer all three questions first.');
       return
@@ -816,9 +831,10 @@ export default function Home() {
         return
       }
       if (data.expired) {
-        setBlindFailed(true)
-        setBlindSorryPopup(true)
-        flash('Time ran out. 💗')
+        setBlindTarget(null)
+        setBlindFailed(false)
+        setBlindSorryPopup(false)
+        flash('Time ran out. Try another person. ⏱️')
         return
       }
       if (data.success === true) {
@@ -828,9 +844,10 @@ export default function Home() {
         if (data.badges) setBadges(data.badges as Badge[])
         flash('+100 XP — Speed Heart challenge completed ⏱️')
       } else {
-        setBlindFailed(true)
-        setBlindSorryPopup(true)
-        flash(`Not quite. You got ${Number(data.score || 0)}/3. There is someone else out there for your vibe. 💗`)
+        setBlindTarget(null)
+        setBlindFailed(false)
+        setBlindSorryPopup(false)
+        flash(`Not quite. You got ${Number(data.score || 0)}/3. Try another person. 💗`)
       }
     } finally {
       setLoading(false)
@@ -867,12 +884,12 @@ export default function Home() {
       <main className="main-content">
         <header className="topbar"><div><span className="eyebrow">{config.prom_title}</span><h1>{countdown.live ? 'Prom Night is LIVE.' : 'Find your people before the lights go down.'}</h1></div><div className="top-actions"><button className="icon-btn" onClick={()=>setTab('notifications')}>♧{unreadNotifications>0&&<i/>}</button><button className="avatar-button" onClick={()=>setTab('profile')}><Avatar p={profile} size="sm"/></button></div></header>
 
-        {tab==='home' && <HomeDashboard profile={profile} progress={progress} config={config} countdown={countdown} people={people} picks={picks} chemistry={chemistry} onlineIds={onlineIds} crushIds={crushIds} onDiscover={()=>setTab('discover')} onCrush={secretCrush} onRequest={requestPartner} relationshipWith={relationshipWith} onBlind={openBlind} setTab={setTab} accepted={accepted} missions={missions} completions={completions} />}
-        {tab==='discover' && <Discover people={filteredPeople} allCount={people.length} relationshipWith={relationshipWith} search={search} setSearch={setSearch} branchFilter={branchFilter} setBranchFilter={setBranchFilter} courseFilter={courseFilter} setCourseFilter={setCourseFilter} ageFilter={ageFilter} setAgeFilter={setAgeFilter} energyFilter={energyFilter} setEnergyFilter={setEnergyFilter} filters={filters} onlineIds={onlineIds} crushIds={crushIds} requestPartner={requestPartner} secretCrush={secretCrush} chemistry={chemistry} openBlind={openBlind} onReport={setReportTarget} />}
-        {tab==='requests' && <Requests incoming={incoming} respond={respond} />}
+        {tab==='home' && <HomeDashboard profile={profile} progress={progress} config={config} countdown={countdown} people={people} picks={picks} onlineIds={onlineIds} crushIds={crushIds} blindAttemptedIds={blindAttemptedIds} onDiscover={()=>setTab('discover')} onCrush={secretCrush} onRequest={requestPartner} cancelRequest={cancelRequest} relationshipWith={relationshipWith} onBlind={openBlind} setTab={setTab} accepted={accepted} missions={missions} completions={completions} />}
+        {tab==='discover' && <Discover people={filteredPeople} allCount={people.length} hasAcceptedMatch={accepted.length > 0} currentUserId={session.user.id} relationshipWith={relationshipWith} search={search} setSearch={setSearch} branchFilter={branchFilter} setBranchFilter={setBranchFilter} courseFilter={courseFilter} setCourseFilter={setCourseFilter} ageFilter={ageFilter} setAgeFilter={setAgeFilter} energyFilter={energyFilter} setEnergyFilter={setEnergyFilter} filters={filters} onlineIds={onlineIds} crushIds={crushIds} requestPartner={requestPartner} cancelRequest={cancelRequest} secretCrush={secretCrush} openBlind={openBlind} blindAttemptedIds={blindAttemptedIds} onReport={setReportTarget} />}
+        {tab==='requests' && <Requests incoming={incoming} outgoing={outgoing} respond={respond} requestPartner={requestPartner} currentUserId={session.user.id} />}
         {tab==='blind' && <BlindMatch people={people} onlineIds={onlineIds} openBlind={openBlind} />}
         {tab==='questions' && <BlindQuestionStudio questions={myBlindQuestions} draft={questionDraft} setDraft={setQuestionDraft} save={saveBlindQuestion} remove={deleteBlindQuestion} />}
-        {tab==='chats' && <Chats accepted={accepted} session={session} activeMatch={activeMatch} setActiveMatch={setActiveMatch} currentOther={currentOther} messages={messages} draft={draft} setDraft={setDraft} sendMessage={sendMessage} onlineIds={onlineIds} unread={unreadByConversation} setUnmatchConfirm={setUnmatchConfirm} />}
+        {tab==='chats' && <Chats accepted={conversations} session={session} activeMatch={activeMatch} setActiveMatch={setActiveMatch} currentOther={currentOther} messages={messages} draft={draft} setDraft={setDraft} sendMessage={sendMessage} onlineIds={onlineIds} unread={unreadByConversation} setUnmatchConfirm={setUnmatchConfirm} />}
         {tab==='missions' && <Missions missions={missions} completions={completions} progress={progress} openProof={(m:Mission)=>{setMissionTarget(m);setMissionProof('')}} />}
         {tab==='journey' && <PromJourney progress={progress} completions={completions} xpHistory={xpHistory} badges={badges} tab={activeTabForJourney} setTab={setActiveTabForJourney} />}
         {tab==='memories' && <MemoryVault memories={memories} saveMemory={saveMemory} memoryTitle={memoryTitle} setMemoryTitle={setMemoryTitle} memoryBody={memoryBody} setMemoryBody={setMemoryBody} />}
@@ -888,7 +905,7 @@ export default function Home() {
       {reportTarget && <Modal title={`Report ${reportTarget.name}`} close={()=>{setReportTarget(null);setBlockWithReport(false)}}><form onSubmit={submitReport} className="modal-form"><select value={reportReason} onChange={e=>setReportReason(e.target.value)} required><option value="">Choose a reason</option><option>Harassment</option><option>Impersonation</option><option>Inappropriate content</option><option>Spam</option><option>Other</option></select><textarea value={reportDetails} onChange={e=>setReportDetails(e.target.value)} placeholder="Tell the admin team what happened…"/><button type="button" className={blockWithReport?'choice active':'choice'} onClick={()=>setBlockWithReport(x=>!x)}>{blockWithReport?'🔒 Blocked after report':'Block this person too'}</button><p className="muted">Blocking prevents them from seeing your profile. You can still see their profile.</p><button className="cta">Send report</button></form></Modal>}
       {missionTarget && <Modal title={`Complete mission · ${missionTarget.title}`} close={()=>setMissionTarget(null)}><form className="modal-form" onSubmit={submitMissionProof}><p className="muted">Tell yourself the story in one line. This stays private in your profile history.</p><textarea value={missionProof} onChange={e=>setMissionProof(e.target.value)} placeholder="What did you do?" required/><button className="cta">Complete mission ✓</button></form></Modal>}
       {missionCompleteInfo && <Modal title="Mission complete 💗" close={()=>setMissionCompleteInfo(null)}><div className="mission-complete-popup"><div className="heart">💗</div><span className="eyebrow">SAVED TO YOUR PROM STORY</span><h3>{missionCompleteInfo.title}</h3><p>{missionCompleteInfo.description}</p><div className="mission-reward">+{missionCompleteInfo.xp} XP</div><button className="cta" onClick={()=>setMissionCompleteInfo(null)}>Nice ✨</button></div></Modal>}
-      {blindTarget && <Modal title={showBlindReveal ? 'Blind Match Reveal ✨' : '60-second Blind Match'} close={()=>{setBlindTarget(null);setBlindSorryPopup(false)}}><div className="blind-modal">{!showBlindReveal ? <><div className="blind-top"><span>Photo hidden</span><b>{blindSeconds}s</b></div>{blindFailed ? <div className="blind-failed"><div className="blind-lock">🔒</div><h3>Blind Match locked</h3><p>That round did not line up. Try another person for a fresh 60-second round.</p><button className="cta" onClick={()=>{setBlindTarget(null);setBlindSorryPopup(false)}}>Back to discovery</button></div> : <><p className="muted">No photo. No profile details. Three interest-based questions. Get all three right before the clock hits zero.</p>{blindQuestions.map((q,i)=><div className="blind-question" key={q.id}><strong>{i+1}. {q.prompt}</strong><div className="blind-options">{q.options.map((opt,j)=><button type="button" key={opt} className={blindAnswers[i]===j?'choice active':'choice'} onClick={()=>setBlindAnswers(a=>a.map((x,k)=>k===i?j:x))}>{opt}</button>)}</div></div>)}<button className="cta" disabled={loading} onClick={submitBlind}>{loading?'Checking…':'Check my answers ✨'}</button></>}</> : <><div className="blind-reveal"><Heart3D compact/><Avatar p={blindTarget} size="xxl"/><h3>{blindTarget.name} · {blindTarget.age || '—'}</h3><p>{blindTarget.course || 'Student'} · {blindTarget.branch || 'Campus'}</p><div className="tags">{(blindTarget.interests||[]).slice(0,4).map(x=><span key={x}>{x}</span>)}</div><p className="reveal-note">You cracked all three. The full profile is unlocked. 💗</p></div>{(() => { const rel = relationshipWith(blindTarget.id); const label = rel.status === 'accepted' ? 'Matched ✓' : rel.status === 'pending' ? 'Requested ✓' : rel.status === 'incoming' ? 'Accept 💗' : 'Ask to Prom 💗'; return <button className="cta" disabled={rel.status === 'accepted' || rel.status === 'pending'} onClick={()=>{setBlindTarget(null);requestPartner(blindTarget.id)}}>{label}</button> })()}</>}</div>{blindSorryPopup && <div className="blind-sorry-overlay"><div className="blind-sorry-card"><div className="blind-sorry-heart">💗</div><span className="eyebrow">NOT THIS TIME</span><h2>Sorry, that one didn't click.</h2><p>Every Prom story has a few wrong turns. There is someone else waiting for your kind of answer.</p><button className="cta" onClick={()=>setBlindSorryPopup(false)}>Try another match ✨</button></div></div>}</Modal>}
+      {blindTarget && <Modal title={showBlindReveal ? 'Blind Match Reveal ✨' : '60-second Blind Match'} close={()=>{setBlindTarget(null);setBlindSorryPopup(false)}}><div className="blind-modal">{!showBlindReveal ? <><div className="blind-top"><span>Photo hidden</span><b>{blindSeconds}s</b></div>{blindFailed ? <div className="blind-failed"><p className="muted">Round ended. Try another person.</p></div> : <><p className="muted">No photo. No profile details. Three interest-based questions. Get all three right before the clock hits zero.</p>{blindQuestions.map((q,i)=><div className="blind-question" key={q.id}><strong>{i+1}. {q.prompt}</strong><div className="blind-options">{q.options.map((opt,j)=><button type="button" key={opt} className={blindAnswers[i]===j?'choice active':'choice'} onClick={()=>setBlindAnswers(a=>a.map((x,k)=>k===i?j:x))}>{opt}</button>)}</div></div>)}<button className="cta" disabled={loading} onClick={submitBlind}>{loading?'Checking…':'Check my answers ✨'}</button></>}</> : <><div className="blind-reveal"><Heart3D compact/><Avatar p={blindTarget} size="xxl"/><h3>{blindTarget.name} · {blindTarget.age || '—'}</h3><p>{blindTarget.course || 'Student'} · {blindTarget.branch || 'Campus'}</p><div className="tags">{(blindTarget.interests||[]).slice(0,4).map(x=><span key={x}>{x}</span>)}</div><p className="reveal-note">You cracked all three. The full profile is unlocked. 💗</p></div>{(() => { const rel = relationshipWith(blindTarget.id); const outgoingPending = rel.status === 'pending' && rel.match?.requester_id === session.user.id; const label = rel.status === 'accepted' ? 'Already matched' : outgoingPending ? 'Requested · Cancel' : rel.status === 'pending' ? 'Requested ✓' : rel.status === 'incoming' ? 'Accept 💗' : 'Ask to Prom 💗'; return <button className="cta" disabled={rel.status === 'accepted'} onClick={()=>{if(outgoingPending && rel.match){cancelRequest(rel.match)} else {setBlindTarget(null);requestPartner(blindTarget.id)}}}>{label}</button> })()}</>}</div></Modal>}
     </div>
   )
 }
@@ -934,22 +951,84 @@ function AuthScreen({ mode, setMode, auth, setAuth, form, setForm, submit, resen
   return <div className="auth-shell"><div className="auth-visual"><div className="auth-glow"/><Heart3D/><div className="auth-copy"><span className="eyebrow">{config.prom_title}</span><h1>Your college. Your people. Your night.</h1><p>Prom Pulse is the temporary social universe built for the one night you will talk about long after the last song.</p><div className="stat-strip"><span><b>College-only</b> <small>personal email welcome</small></span><span><b>Email OTP</b> <small>one-time signup verification</small></span><span><b>Secret Crush</b> <small>mutual reveals</small></span></div></div></div><div className="auth-card"><div className="brand"><span className="brand-mark">♡</span><span>Prom <b>Pulse</b></span></div><div className="auth-tabs"><button type="button" className={mode==='signup'?'active':''} onClick={()=>{setMode('signup');setAuthStep('email');setAuth({...auth,otp:''})}}>Sign up</button><button type="button" className={mode==='login'?'active':''} onClick={()=>{setMode('login');setAuthStep('email');setAuth({...auth,otp:''})}}>Log in</button></div>{verification ? <form onSubmit={submit}><div className="verification-card"><span className="eyebrow">ONE-TIME VERIFICATION</span><h2>Enter your verification code</h2><p className="muted">We sent an 8-digit one-time code to <b>{auth.email}</b>. You will use your password for future logins.</p><label>OTP code<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{8}" minLength={8} maxLength={8} value={auth.otp} onChange={e=>setAuth({...auth,otp:e.target.value.replace(/\D/g,'').slice(0,8)})} placeholder="12345678" required /></label><button className="cta" disabled={loading || auth.otp.length !== 8}>{loading?'Verifying…':'Verify email →'}</button><div className="auth-secondary-actions"><button type="button" className="ghost-button" onClick={resendOtp} disabled={resendBusy || resendCooldown > 0}>{resendBusy ? 'Sending…' : resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}</button><button type="button" className="ghost-button" onClick={()=>setAuthStep('email')}>Change email</button></div></div></form> : <form onSubmit={submit}><label>Email<input type="email" autoComplete={mode==='login'?'username':'email'} value={auth.email} onChange={e=>setAuth({...auth,email:e.target.value})} placeholder="you@example.com" required /></label><label>Password<input type="password" autoComplete={mode==='login'?'current-password':'new-password'} minLength={8} value={auth.password} onChange={e=>setAuth({...auth,password:e.target.value})} placeholder="At least 8 characters" required /></label>{mode==='signup' ? <p className="muted auth-otp-note">You'll receive a one-time 8-digit verification code once, then use this password for future logins. No phone number or college email required.</p> : <p className="muted auth-otp-note">Use the password you created when you signed up. Email OTP is only used once during signup.</p>}{mode==='signup' && <><label>Full name<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required /></label><div className="row"><label>Age<input type="number" min="16" max="100" value={form.age} onChange={e=>setForm({...form,age:e.target.value})} required /></label><label>Year<select value={form.year} onChange={e=>setForm({...form,year:e.target.value})}><option>1st year</option><option>2nd year</option><option>3rd year</option><option>4th year</option><option>PG</option></select></label></div><label>Gender<select value={form.gender} onChange={e=>setForm({...form,gender:e.target.value as Gender | ''})} required><option value="">Select gender</option>{GENDERS.map(x=><option key={x} value={x}>{x[0].toUpperCase()+x.slice(1)}</option>)}</select><small>Used only to personalize who appears in your discovery.</small></label><label>Course<select value={form.course} onChange={e=>setForm({...form,course:e.target.value})} required><option value="">Select course</option>{COURSES.map(x=><option key={x}>{x}</option>)}</select></label><label>Branch<select value={form.branch} onChange={e=>setForm({...form,branch:e.target.value})} required><option value="">Select branch</option>{BRANCHES.map(x=><option key={x}>{x}</option>)}</select></label><div className="onboarding-block"><span className="hint-title">Your Prom Energy</span><div className="choice-grid">{ENERGY.map(x=><button type="button" key={x} title={ENERGY_DESCRIPTIONS[x]} aria-label={`${x}: ${ENERGY_DESCRIPTIONS[x]}`} className={form.prom_energy===x?'choice active':'choice'} onClick={()=>setForm({...form,prom_energy:x})}>{x}</button>)}</div></div><div className="onboarding-block"><span className="hint-title">Ideal Prom Night</span><div className="choice-grid">{PROM_STYLES.map(x=><button type="button" key={x} className={form.prom_style===x?'choice active':'choice'} onClick={()=>setForm({...form,prom_style:x})}>{x}</button>)}</div></div><label>3 things you like <small>comma separated</small><input disabled={form.interests_private} value={form.interests} onChange={e=>setForm({...form,interests:e.target.value})} placeholder={form.interests_private?'Interests hidden':'music, cricket, movies'} /></label><button type="button" className={form.interests_private?'choice active':'choice'} onClick={()=>setForm({...form,interests_private:!form.interests_private})}>{form.interests_private?'🤫 Interests hidden':'I don’t want to reveal my interests'}</button></> }<button className="cta" disabled={loading}>{loading?(mode==='signup'?'Sending…':'Logging in…'):mode==='signup'?'Create account & verify email →':'Log in →'}</button></form>}<p className="auth-note">By joining, you agree to be respectful, protect private conversations, and follow your college's event rules.</p></div></div>
 }
 
-function HomeDashboard({ profile, progress, config, countdown, people, picks, chemistry, onlineIds, crushIds, onDiscover, onCrush, onRequest, relationshipWith, onBlind, setTab, accepted, missions, completions }: any) {
+function HomeDashboard({ profile, progress, config, countdown, people, picks, onlineIds, crushIds, blindAttemptedIds, onDiscover, onCrush, onRequest, cancelRequest, relationshipWith, onBlind, setTab, accepted, missions, completions }: any) {
   const completed = completions.length
-  return <div className="dashboard"><section className="hero-panel panel"><div className="hero-copy"><span className="eyebrow">{countdown.live?'PROM NIGHT MODE':'YOUR PROM UNIVERSE'}</span><h2>{countdown.live?'The night is live. Make a memory.':'Who will be your Prom +1?'}</h2><p>{countdown.live?'Use Live Mode to find your people, talk, and save the night to your Memory Vault.':'Prom Pulse is where college prom stops being a calendar event and becomes a story you can actually take part in.'}</p><div className="hero-actions"><button className="cta" onClick={onDiscover}>Discover people</button><button className="ghost-button" onClick={()=>setTab('missions')}>Play a mission 🎯</button></div></div></section><section className="countdown-panel panel"><div><span className="eyebrow">{config.prom_title}</span><h3>The Night of Unforgettable Stories ✨</h3></div>{countdown.live?<div className="live-mode"><span className="pulse-orb"/> LIVE <b>{people.filter((p:any)=>onlineIds.includes(p.id)).length + 1}</b> people online</div>:<div className="timer"><div><b>{pad(countdown.days)}</b><small>days</small></div><div><b>{pad(countdown.hours)}</b><small>hours</small></div><div><b>{pad(countdown.mins)}</b><small>mins</small></div><div><b>{pad(countdown.secs)}</b><small>secs</small></div></div>}</section><section className="section"><div className="section-head"><div><span className="eyebrow">WHO SHOULD I TALK TO?</span><h3>Tonight's 3 Prom Picks</h3></div><button className="ghost-button" onClick={onDiscover}>See everyone</button></div><div className="pick-grid">{picks.map((p:Profile)=><article className="pick-card" key={p.id}><div className="pick-score">{chemistry(p)}% chemistry</div><Avatar p={p} size="lg"/><div><h3>{p.name} <span>{p.age || ''}</span></h3><p>{p.course || 'Student'} · {p.branch || 'Campus'}</p><div className="tags">{(p.interests || []).slice(0,2).map(x=><span key={x}>{x}</span>)}</div></div><div className="pick-actions"><button className="ghost-icon" onClick={()=>onBlind(p)} title="Blind match">🎯</button><button className="ghost-icon" onClick={()=>onCrush(p)} title="Secret crush">{crushIds.includes(p.id)?'♥':'♡'}</button>{(() => { const rel = relationshipWith(p.id); const label = rel.status === 'accepted' ? 'Matched ✓' : rel.status === 'pending' ? 'Requested ✓' : rel.status === 'incoming' ? 'Accept 💗' : rel.status === 'declined' ? 'Declined' : 'Ask to Prom'; return <button className="match-btn" disabled={rel.status === 'accepted' || rel.status === 'pending' || rel.status === 'declined'} onClick={()=>onRequest(p.id)}>{label}</button> })()}</div></article>)}{picks.length===0&&<div className="empty"><div className="heart">♡</div><p>Your picks will appear as students join.</p></div>}</div></section><section className="mini-grid"><div className="panel chemistry-card"><span className="eyebrow">YOUR PROM CHEMISTRY</span><div className="chemistry-meter"><div style={{width:`${Math.min(70+accepted.length*5,96)}%`}}/></div><div className="chemistry-number">{Math.min(70+accepted.length*5,96)}%</div><p>Keep discovering to sharpen your chemistry circle.</p></div><div className="panel mission-card"><span className="eyebrow">YOUR PROM JOURNEY</span><h3>Level {progress?.level || 1} · {progress?.title || 'Newcomer 💫'}</h3><div className="xp-track"><div style={{width:`${progress ? Math.min(100, Math.max(0, ((progress.xp-(LEVELS.find(l=>l.level===progress.level)?.min||0))/Math.max(1,(nextLevelForXp(progress.xp)?.min||progress.xp+1)-(LEVELS.find(l=>l.level===progress.level)?.min||0)))*100)) : 0}%`}}/></div><p>{progress?.xp || 0} XP · {completed}/{missions.length} missions completed</p><button className="ghost-button" onClick={()=>setTab('journey')}>Open my journey →</button></div><div className="panel live-stats"><span className="eyebrow">CAMPUS PULSE</span><div><b>{people.length}</b><span>students joined</span></div><div><b>{accepted.length}</b><span>your connections</span></div><div><b>{people.filter((p:Profile)=>onlineIds.includes(p.id)).length}</b><span>online now</span></div></div></section></div>
+  return <div className="dashboard"><section className="hero-panel panel"><div className="hero-copy"><span className="eyebrow">{countdown.live?'PROM NIGHT MODE':'YOUR PROM UNIVERSE'}</span><h2>{countdown.live?'The night is live. Make a memory.':'Who will be your Prom +1?'}</h2><p>{countdown.live?'Use Live Mode to find your people, talk, and save the night to your Memory Vault.':'Prom Pulse is where college prom stops being a calendar event and becomes a story you can actually take part in.'}</p><div className="hero-actions"><button className="cta" onClick={onDiscover}>Discover people</button><button className="ghost-button" onClick={()=>setTab('missions')}>Play a mission 🎯</button></div></div></section><section className="countdown-panel panel"><div><span className="eyebrow">{config.prom_title}</span><h3>The Night of Unforgettable Stories ✨</h3></div>{countdown.live?<div className="live-mode"><span className="pulse-orb"/> LIVE <b>{people.filter((p:any)=>onlineIds.includes(p.id)).length + 1}</b> people online</div>:<div className="timer"><div><b>{pad(countdown.days)}</b><small>days</small></div><div><b>{pad(countdown.hours)}</b><small>hours</small></div><div><b>{pad(countdown.mins)}</b><small>mins</small></div><div><b>{pad(countdown.secs)}</b><small>secs</small></div></div>}</section><section className="section"><div className="section-head"><div><span className="eyebrow">WHO SHOULD I TALK TO?</span><h3>Tonight's 3 Prom Picks</h3></div><button className="ghost-button" onClick={onDiscover}>See everyone</button></div><div className="pick-grid">{picks.map((p:Profile)=><article className="pick-card" key={p.id}><Avatar p={p} size="lg"/><div><h3>{p.name} <span>{p.age || ''}</span></h3><p>{p.course || 'Student'} · {p.branch || 'Campus'}</p><div className="tags">{(p.interests || []).slice(0,2).map(x=><span key={x}>{x}</span>)}</div></div><div className="pick-actions"><button className="ghost-icon" onClick={()=>onBlind(p)} title={blindAttemptedIds.includes(p.id)?'Already attempted':'Blind match'}>{blindAttemptedIds.includes(p.id)?'✓':'🎯'}</button><button className="ghost-icon" onClick={()=>onCrush(p)} title="Secret crush">{crushIds.includes(p.id)?'♥':'♡'}</button>{(() => { const rel = relationshipWith(p.id); const outgoingPending = rel.status === 'pending' && rel.match?.requester_id === profile?.id; const label = accepted.length > 0 ? 'You’re already matched' : p.is_matched ? 'Already matched' : rel.status === 'accepted' ? 'Already matched' : outgoingPending ? 'Requested · Cancel' : rel.status === 'pending' ? 'Requested ✓' : rel.status === 'incoming' ? 'Accept 💗' : 'Ask to Prom'; return <button className="match-btn" disabled={accepted.length > 0 || p.is_matched || rel.status === 'accepted'} onClick={()=>outgoingPending && rel.match ? cancelRequest(rel.match) : onRequest(p.id)}>{label}</button> })()}</div></article>)}{picks.length===0&&<div className="empty"><div className="heart">♡</div><p>Your picks will appear as students join.</p></div>}</div></section><section className="mini-grid"><div className="panel chemistry-card"><span className="eyebrow">YOUR PROM CONNECTIONS</span><h3>{accepted.length} active match{accepted.length===1?'':'es'}</h3><p>Matched people stay visible in discovery, while requests remain locked until you are free to match again.</p><button className="ghost-button" onClick={()=>setTab('chats')}>Open chats →</button></div><div className="panel mission-card"><span className="eyebrow">YOUR PROM JOURNEY</span><h3>Level {progress?.level || 1} · {progress?.title || 'Newcomer 💫'}</h3><div className="xp-track"><div style={{width:`${progress ? Math.min(100, Math.max(0, ((progress.xp-(LEVELS.find(l=>l.level===progress.level)?.min||0))/Math.max(1,(nextLevelForXp(progress.xp)?.min||progress.xp+1)-(LEVELS.find(l=>l.level===progress.level)?.min||0)))*100)) : 0}%`}}/></div><p>{progress?.xp || 0} XP · {completed}/{missions.length} missions completed</p><button className="ghost-button" onClick={()=>setTab('journey')}>Open my journey →</button></div><div className="panel live-stats"><span className="eyebrow">CAMPUS PULSE</span><div><b>{people.length}</b><span>students joined</span></div><div><b>{accepted.length}</b><span>your connections</span></div><div><b>{people.filter((p:Profile)=>onlineIds.includes(p.id)).length}</b><span>online now</span></div></div></section></div>
 }
 
-function Discover({ people, allCount, relationshipWith, search, setSearch, branchFilter, setBranchFilter, courseFilter, setCourseFilter, ageFilter, setAgeFilter, energyFilter, setEnergyFilter, filters, onlineIds, crushIds, requestPartner, secretCrush, chemistry, openBlind, onReport }: any) {
-  return <div className="section"><div className="section-head"><div><span className="eyebrow">CAMPUS-ONLY DISCOVERY</span><h2>Meet people from {allCount ? 'your college' : 'your campus'}.</h2></div><span className="count">{people.length} shown</span></div><div className="filter-bar"><div className="searchbox"><span>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search names, branches, interests…"/></div><select value={branchFilter} onChange={e=>setBranchFilter(e.target.value)}><option value="all">All branches</option>{filters.branches.map((x:string)=><option key={x}>{x}</option>)}</select><select value={courseFilter} onChange={e=>setCourseFilter(e.target.value)}><option value="all">All courses</option>{filters.courses.map((x:string)=><option key={x}>{x}</option>)}</select><select value={ageFilter} onChange={e=>setAgeFilter(e.target.value)}><option value="all">All ages</option><option value="18-19">18–19</option><option value="20-21">20–21</option><option value="22+">22+</option></select><select value={energyFilter} onChange={e=>setEnergyFilter(e.target.value)}><option value="all">All energy</option>{ENERGY.map(x=><option key={x}>{x}</option>)}</select></div><div className="person-grid">{people.map((p:Profile)=><article className="person-card" key={p.id}><div className="card-ribbon">{chemistry(p)}% chemistry</div><button className="more-btn" onClick={()=>onReport(p)}>⋯</button><div className="photo-wrap"><Avatar p={p} size="xl"/><span className={onlineIds.includes(p.id)?'status-badge online':'status-badge'}>{onlineIds.includes(p.id)?'● Online':'○ Around campus'}</span></div><h3>{p.name} <span>{p.age || ''}</span></h3><p className="meta">{p.course || 'Student'} · {p.branch || 'Campus'} · {p.year || ''}</p><div className="tags">{[p.prom_energy, p.prom_style, ...(p.interests || [])].filter(Boolean).slice(0,4).map(x=><span key={x}>{x}</span>)}</div><p className="bio">{p.bio || `Looking for ${p.looking_for || 'a memorable prom night'}.`}</p><div className="card-actions"><button className="ghost-icon" onClick={()=>openBlind(p)} title="Blind match">🎯</button><TooltipHint text="Send a secret crush. They won't know unless they feel the same."><button className="ghost-icon" onClick={()=>secretCrush(p)} title="Secret crush">{crushIds.includes(p.id)?'♥':'♡'}</button></TooltipHint>{(() => { const rel = relationshipWith(p.id); const label = rel.status === 'accepted' ? 'Matched ✓' : rel.status === 'pending' ? 'Requested ✓' : rel.status === 'incoming' ? 'Accept 💗' : rel.status === 'declined' ? 'Declined' : 'Ask to Prom'; return <button className="match-btn" disabled={rel.status === 'accepted' || rel.status === 'pending' || rel.status === 'declined'} onClick={()=>requestPartner(p.id)}>{label}</button> })()}</div></article>)}{people.length===0&&<div className="panel empty"><div className="heart">♡</div><h3>The campus is quiet right now.</h3><p>Try another search, or make sure the other account has completed email verification.</p></div>}</div></div>
+function Discover({ people, allCount, hasAcceptedMatch, currentUserId, relationshipWith, search, setSearch, branchFilter, setBranchFilter, courseFilter, setCourseFilter, ageFilter, setAgeFilter, energyFilter, setEnergyFilter, filters, onlineIds, crushIds, requestPartner, cancelRequest, secretCrush, openBlind, blindAttemptedIds, onReport }: any) {
+  return <div className="section"><div className="section-head"><div><span className="eyebrow">CAMPUS-ONLY DISCOVERY</span><h2>Meet people from {allCount ? 'your college' : 'your campus'}.</h2></div><span className="count">{people.length} shown</span></div><div className="filter-bar"><div className="searchbox"><span>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search names, branches, interests…"/></div><select value={branchFilter} onChange={e=>setBranchFilter(e.target.value)}><option value="all">All branches</option>{filters.branches.map((x:string)=><option key={x}>{x}</option>)}</select><select value={courseFilter} onChange={e=>setCourseFilter(e.target.value)}><option value="all">All courses</option>{filters.courses.map((x:string)=><option key={x}>{x}</option>)}</select><select value={ageFilter} onChange={e=>setAgeFilter(e.target.value)}><option value="all">All ages</option><option value="18-19">18–19</option><option value="20-21">20–21</option><option value="22+">22+</option></select><select value={energyFilter} onChange={e=>setEnergyFilter(e.target.value)}><option value="all">All energy</option>{ENERGY.map(x=><option key={x}>{x}</option>)}</select></div><div className="person-grid">{people.map((p:Profile)=><article className="person-card" key={p.id}><button className="more-btn" onClick={()=>onReport(p)}>⋯</button><div className="photo-wrap"><Avatar p={p} size="xl"/><span className={onlineIds.includes(p.id)?'status-badge online':'status-badge'}>{onlineIds.includes(p.id)?'● Online':'○ Around campus'}</span></div><h3>{p.name} <span>{p.age || ''}</span></h3><p className="meta">{p.course || 'Student'} · {p.branch || 'Campus'} · {p.year || ''}</p><div className="tags">{[p.prom_energy, p.prom_style, ...(p.interests || [])].filter(Boolean).slice(0,4).map(x=><span key={x}>{x}</span>)}</div><p className="bio">{p.bio || `Looking for ${p.looking_for || 'a memorable prom night'}.`}</p><div className="card-actions"><button className="ghost-icon" onClick={()=>openBlind(p)} title={blindAttemptedIds.includes(p.id)?'Already attempted':'Blind match'}>{blindAttemptedIds.includes(p.id)?'✓':'🎯'}</button><TooltipHint text="Send a secret crush. They won't know unless they feel the same."><button className="ghost-icon" onClick={()=>secretCrush(p)} title="Secret crush">{crushIds.includes(p.id)?'♥':'♡'}</button></TooltipHint>{(() => { const rel = relationshipWith(p.id); const outgoingPending = rel.status === 'pending' && rel.match?.requester_id === currentUserId; const label = hasAcceptedMatch ? 'You’re already matched' : p.is_matched || rel.status === 'accepted' ? 'Already matched' : outgoingPending ? 'Requested · Cancel' : rel.status === 'pending' ? 'Requested ✓' : rel.status === 'incoming' ? 'Accept 💗' : 'Ask to Prom'; return <button className="match-btn" disabled={hasAcceptedMatch || p.is_matched || rel.status === 'accepted'} onClick={()=>outgoingPending && rel.match ? cancelRequest(rel.match) : requestPartner(p.id)}>{label}</button> })()}</div></article>)}{people.length===0&&<div className="panel empty"><div className="heart">♡</div><h3>The campus is quiet right now.</h3><p>Try another search, or make sure the other account has completed email verification.</p></div>}</div></div>
 }
 
-function Requests({ incoming, respond }: any) {
+function Requests({ incoming, outgoing, respond, requestPartner, currentUserId }: any) {
   const pending = incoming.filter((x:Match)=>x.status==='pending')
-  return <div className="panel page-panel"><div className="section-head"><div><span className="eyebrow">YOUR INVITES</span><h2>Requests</h2></div><span className="count">{pending.length} waiting</span></div>{pending.length===0?<div className="empty"><div className="heart">♡</div><h3>No waiting requests</h3><p>Someone may be choosing the right words.</p></div>:pending.map((m:Match)=><div className="request-row" key={m.id}><Avatar p={m.requester} size="md"/><div><strong>{m.requester.name}</strong><span>{m.requester.course || 'Student'} · {m.requester.branch || 'Campus'}</span><small>{m.requester.prom_energy || 'Prom explorer'}</small></div><div className="request-actions"><button className="ghost-button" onClick={()=>respond(m.id,'declined')}>Not this time</button><button className="match-btn" onClick={()=>respond(m.id,'accepted')}>Accept 💗</button></div></div>)}</div>
+  // A declined incoming request and an unmatched relationship are both shown here.
+  // The counterpart is derived from the direction of the relationship.
+  const declinedPeople = [...incoming, ...outgoing]
+    .filter((x:Match)=>x.status==='declined' || x.status==='cancelled')
+    .map((m:Match) => ({ m, person: m.requester_id === currentUserId ? m.receiver : m.requester, personId: m.requester_id === currentUserId ? m.receiver_id : m.requester_id }))
+    .filter((x:any, i:number, arr:any[]) => arr.findIndex(y=>y.personId===x.personId)===i)
+  return <div className="panel page-panel"><div className="section-head"><div><span className="eyebrow">YOUR INVITES</span><h2>Requests</h2></div><span className="count">{pending.length} waiting</span></div>
+    {pending.length===0?<div className="empty"><div className="heart">♡</div><h3>No waiting requests</h3><p>Someone may be choosing the right words.</p></div>:pending.map((m:Match)=><div className="request-row" key={m.id}><Avatar p={m.requester} size="md"/><div><strong>{m.requester.name}</strong><span>{m.requester.course || 'Student'} · {m.requester.branch || 'Campus'}</span><small>{m.requester.prom_energy || 'Prom explorer'}</small></div><div className="request-actions"><button className="ghost-button" onClick={()=>respond(m.id,'declined')}>Not this time</button><button className="match-btn" onClick={()=>respond(m.id,'accepted')}>Accept 💗</button></div></div>)}
+    <div className="section-head" style={{marginTop:24}}><div><span className="eyebrow">DECLINED LIST</span><h3>People you declined or unmatched</h3></div><span className="count">{declinedPeople.length}</span></div>
+    {declinedPeople.length===0?<div className="empty"><p>No declined or unmatched people yet.</p></div>:declinedPeople.map(({m,person,personId}:any)=><div className="request-row" key={m.id}><Avatar p={person} size="md"/><div><strong>{person?.name || 'Student'}</strong><span>{person?.course || 'Student'} · {person?.branch || 'Campus'}</span><small>{m.status==='cancelled'?'Previously matched · now unmatched':'Previously declined'}</small></div><div className="request-actions"><button className="match-btn" onClick={()=>requestPartner(personId)}>Ask to Prom again 💌</button></div></div>)}
+    <div className="muted" style={{marginTop:20}}>Declined and unmatched people can be asked again from this list.</div>
+  </div>
 }
-
 function Chats({ accepted, session, activeMatch, setActiveMatch, currentOther, messages, draft, setDraft, sendMessage, onlineIds, unread, setUnmatchConfirm }: any) {
-  return <div className="panel chat-panel"><div className="chat-list"><div className="section-head"><div><span className="eyebrow">REAL-TIME</span><h2>Chats</h2></div><span className="count">{accepted.length}</span></div>{accepted.map((m:Match)=><button className={`chat-pick ${activeMatch?.id===m.id?'selected':''}`} key={m.id} onClick={()=>setActiveMatch(m)}><Avatar p={currentOther(m)} size="sm"/><div><strong>{currentOther(m).name}</strong><span>{onlineIds.includes(currentOther(m).id)?'Online now':'Prom match'}</span></div>{unread[m.id]>0?<span className="unread-badge">{unread[m.id]}</span>:<span>›</span>}</button>)}{accepted.length===0&&<div className="muted">A mutual match unlocks your private conversation.</div>}</div><div className="chat-window">{activeMatch?<><div className="chat-head"><Avatar p={currentOther(activeMatch)} size="sm"/><div><strong>{currentOther(activeMatch).name}</strong><span>{onlineIds.includes(currentOther(activeMatch).id)?'Online now':'Your Prom match'}</span></div><button type="button" className="danger-btn chat-unmatch" onClick={()=>setUnmatchConfirm(activeMatch)}>Unmatch</button></div><div className="messages">{messages.map((m:Message)=><div key={m.id} className={`bubble ${m.sender_id===session.user.id?'mine':''}`}>{m.body}<small>{new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small></div>)}{messages.length===0&&<div className="empty-chat"><div className="heart">💗</div><p>Start with something better than “hey”.</p></div>}</div><form className="message-form" onSubmit={sendMessage}><input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Tell them what would make your Prom night memorable…"/><button>➤</button></form></>:<div className="empty-chat"><Heart3D compact/><h3>Choose a conversation</h3><p>Your private conversations live here.</p></div>}</div></div>
+  return (
+    <div className="panel chat-panel">
+      <div className="chat-list">
+        <div className="section-head">
+          <div><span className="eyebrow">REAL-TIME</span><h2>Chats</h2></div>
+          <span className="count">{accepted.length}</span>
+        </div>
+        {accepted.map((m: Match) => (
+          <button className={`chat-pick ${activeMatch?.id === m.id ? 'selected' : ''}`} key={m.id} onClick={() => setActiveMatch(m)}>
+            <Avatar p={currentOther(m)} size="sm" />
+            <div>
+              <strong>{currentOther(m).name}</strong>
+              <span>{m.status === 'accepted' ? (onlineIds.includes(currentOther(m).id) ? 'Online now' : 'Prom match') : 'Unmatched · history kept'}</span>
+            </div>
+            {unread[m.id] > 0 ? <span className="unread-badge">{unread[m.id]}</span> : <span>›</span>}
+          </button>
+        ))}
+        {accepted.length === 0 && <div className="muted">Your matched and unmatched chat history will appear here.</div>}
+      </div>
+      <div className="chat-window">
+        {activeMatch ? (
+          <>
+            <div className="chat-head">
+              <Avatar p={currentOther(activeMatch)} size="sm" />
+              <div>
+                <strong>{currentOther(activeMatch).name}</strong>
+                <span>{activeMatch.status === 'accepted' ? (onlineIds.includes(currentOther(activeMatch).id) ? 'Online now' : 'Your Prom match') : 'Unmatched · chat locked'}</span>
+              </div>
+              {activeMatch.status === 'accepted' && <button type="button" className="danger-btn chat-unmatch" onClick={() => setUnmatchConfirm(activeMatch)}>Unmatch</button>}
+            </div>
+            <div className="messages">
+              {messages.map((m: Message) => (
+                <div key={m.id} className={`bubble ${m.sender_id === session.user.id ? 'mine' : ''}`}>
+                  {m.body}<small>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small>
+                </div>
+              ))}
+              {messages.length === 0 && <div className="empty-chat"><div className="heart">💗</div><p>{activeMatch.status === 'accepted' ? 'Start with something better than “hey”.' : 'No messages yet.'}</p></div>}
+            </div>
+            {activeMatch.status === 'accepted' ? (
+              <form className="message-form" onSubmit={sendMessage}>
+                <input value={draft} onChange={e => setDraft(e.target.value)} placeholder="Tell them what would make your Prom night memorable…" />
+                <button>➤</button>
+              </form>
+            ) : (
+              <div className="chat-locked-line">Get matched to chat again 💗</div>
+            )}
+          </>
+        ) : (
+          <div className="empty-chat"><Heart3D compact /><h3>Choose a conversation</h3><p>Your private conversations live here.</p></div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function Missions({ missions, completions, progress, openProof }: any) {

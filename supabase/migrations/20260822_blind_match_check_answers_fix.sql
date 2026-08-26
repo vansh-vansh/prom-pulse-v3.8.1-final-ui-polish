@@ -1,4 +1,4 @@
--- Prom Pulse: reliable Blind Match answer checking.
+-- Salsa Night: reliable Blind Match answer checking.
 -- Safe to run after the Blind Match hardening migration.
 
 create or replace function public.submit_blind_round(round_uuid uuid, answers jsonb)

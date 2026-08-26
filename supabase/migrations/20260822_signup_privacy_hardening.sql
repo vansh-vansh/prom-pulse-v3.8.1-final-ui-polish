@@ -1,4 +1,4 @@
--- Prom Pulse: signup/privacy hardening migration
+-- Salsa Night: signup/privacy hardening migration
 -- Idempotent. Does not delete existing user data.
 
 begin;
@@ -43,7 +43,7 @@ begin
   where id = uid;
 
   if not found or u.email_confirmed_at is null then
-    raise exception 'Verify your email before entering Prom Pulse.';
+    raise exception 'Verify your email before entering Salsa Night.';
   end if;
 
   meta := coalesce(u.raw_user_meta_data, '{}'::jsonb);

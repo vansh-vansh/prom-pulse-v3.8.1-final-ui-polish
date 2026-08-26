@@ -1,4 +1,4 @@
--- Prom Pulse: Blind Match hardening + question-bank reliability.
+-- Salsa Night: Blind Match hardening + question-bank reliability.
 -- Idempotent and safe for existing users. Does not delete custom questions.
 
 -- Keep the original full branch catalog used by the existing app. The branch

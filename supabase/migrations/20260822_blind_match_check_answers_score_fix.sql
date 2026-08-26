@@ -1,4 +1,4 @@
--- Prom Pulse: final fix for Blind Match answer submission.
+-- Salsa Night: final fix for Blind Match answer submission.
 -- Fixes PostgreSQL 42702: column reference "score" is ambiguous.
 -- Safe/idempotent: replaces only the submit_blind_round function.
 

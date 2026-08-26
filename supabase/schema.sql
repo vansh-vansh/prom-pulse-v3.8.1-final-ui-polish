@@ -1,5 +1,5 @@
--- PROM PULSE v3.6.3
--- Consolidated, rerunnable Supabase schema for the existing Prom Pulse project.
+-- Salsa Night v3.6.3
+-- Consolidated, rerunnable Supabase schema for the existing Salsa Night project.
 -- This file intentionally replaces the older layered migration history.
 -- Safe to run on the existing project. It does NOT drop user data.
 
@@ -540,7 +540,7 @@ begin
   from auth.users where id=uid;
 
   if not found or u.email_confirmed_at is null then
-    raise exception 'Verify your email before entering Prom Pulse.';
+    raise exception 'Verify your email before entering Salsa Night.';
   end if;
 
   meta := coalesce(u.raw_user_meta_data,'{}'::jsonb);
@@ -657,7 +657,7 @@ grant select on public.public_profile_discovery to authenticated;
 -- -----------------------------------------------------------------------------
 -- ACCOUNT DELETION
 -- Permanently deletes the signed-in user's auth record. All profile-linked rows
--- use ON DELETE CASCADE, so the user's Prom Pulse data is removed as well.
+-- use ON DELETE CASCADE, so the user's Salsa Night data is removed as well.
 -- Avatar files are removed by the client through the Storage API before this
 -- function is called. Direct writes to storage.objects are intentionally avoided
 -- because Supabase requires Storage API operations for object deletion.
@@ -1090,7 +1090,7 @@ alter table public.xp_transactions enable row level security;
 alter table public.badges enable row level security;
 alter table public.user_badges enable row level security;
 
--- Known legacy policy names from prior Prom Pulse versions are removed too.
+-- Known legacy policy names from prior Salsa Night versions are removed too.
 do $$
 declare r record;
 begin

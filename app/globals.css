@@ -51,7 +51,7 @@
 @media(max-width:600px){.chat-head{display:grid;grid-template-columns:auto 1fr auto;gap:9px}.chat-unmatch{font-size:10px;padding:7px 9px}.secret-intro-card{padding:30px 20px 22px}.secret-intro-card h2{font-size:29px}}
 
 
-/* Prom Pulse interaction polish: hover/focus only.
+/* Salsa Night interaction polish: hover/focus only.
    No feature or data logic is changed. */
 @media (hover: hover) {
   button:not(:disabled), [role="button"]:not([aria-disabled="true"]),
@@ -147,9 +147,29 @@ label[data-energy] {
 }
 }
 
-/* Prom Pulse feature update polish */
+/* Salsa Night feature update polish */
 .chat-pick .avatar,
 .chat-head .avatar,
 .chat-pick .avatar-img,
 .chat-head .avatar-img { border-radius: 50% !important; aspect-ratio: 1 / 1; }
 .chat-locked-line { padding: 14px 20px; border-top: 1px solid var(--line); text-align: center; color: #ff9bc8; font-size: 12px; letter-spacing: .02em; background: #120811; }
+.site-credit {
+  grid-column: 1 / -1;
+  width:100%;
+  padding:18px 24px 22px;
+  text-align:center;
+  font-size:12px;
+  line-height:1.6;
+  color:rgba(220,190,215,0.62);
+  border-top:1px solid rgba(255,90,170,0.10);
+  margin-top:12px;
+}
+.site-credit div:first-child {
+  color: rgba(255, 105, 180, 0.85);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.site-credit div:last-child {
+  margin-top: 2px;
+}

@@ -1,4 +1,4 @@
--- Prom Pulse feature update: request cancellation/re-request, Secret Crush toggle,
+-- Salsa Night feature update: request cancellation/re-request, Secret Crush toggle,
 -- two-gender discovery, visible matched profiles, persistent locked chats,
 -- and one-attempt-per-person Blind Match.
 

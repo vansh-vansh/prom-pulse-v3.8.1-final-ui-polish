@@ -1,4 +1,4 @@
--- Prom Pulse launch-critical gender discovery + unmatch migration.
+-- Salsa Night launch-critical gender discovery + unmatch migration.
 -- Idempotent and non-destructive. Existing users must choose a gender in Profile
 -- before they reappear in gender-filtered discovery.
 

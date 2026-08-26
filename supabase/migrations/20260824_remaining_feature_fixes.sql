@@ -1,4 +1,4 @@
--- Prom Pulse 2026-08-24 remaining feature fixes
+-- Salsa Night 2026-08-24 remaining feature fixes
 -- Run this ONCE in Supabase SQL Editor for the production project.
 -- Safe to re-run.
 
